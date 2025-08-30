@@ -560,6 +560,29 @@ async def test_output_guardrail_tripwire_triggered_causes_exception():
         await Runner.run(agent, input="user_message")
 
 
+@pytest.mark.asyncio
+async def test_blocking_input_guardrail_tripwire_prevents_model_call():
+    """Blocking input guardrails should prevent the initial model call if tripped."""
+    def guardrail_function(
+        context: RunContextWrapper[Any], agent: Agent[Any], input: Any
+    ) -> GuardrailFunctionOutput:
+        return GuardrailFunctionOutput(output_info=None, tripwire_triggered=True)
+
+    model = FakeModel()
+    model.set_next_output([get_text_message("should_not_be_called")])
+    agent = Agent(
+        name="test",
+        input_guardrails=[InputGuardrail(guardrail_function=guardrail_function)],
+        model=model,
+    )
+
+    with pytest.raises(InputGuardrailTripwireTriggered):
+        await Runner.run(agent, input="user_message")
+
+    # Ensure model was never invoked
+    assert model.last_turn_args == {}
+
+
 @function_tool
 def test_tool_one():
     return Foo(bar="tool_one_result")

@@ -402,18 +402,33 @@ class AgentRunner:
                             self._separate_blocking_guardrails(all_guardrails)
                         )
 
-                        # Start all guardrails and model call in parallel
-                        all_guardrails_task = asyncio.create_task(
-                            self._run_input_guardrails(
+                        if blocking_guardrails:
+                            # Gate the initial model call on blocking guardrails completing.
+                            # If a tripwire is triggered, this will raise BEFORE any LLM call.
+                            blocking_results = await self._run_input_guardrails(
                                 starting_agent,
-                                all_guardrails,
+                                blocking_guardrails,
                                 copy.deepcopy(input),
                                 context_wrapper,
                             )
-                        )
+                            input_guardrail_results.extend(blocking_results)
 
-                        model_response_task = asyncio.create_task(
-                            self._get_model_response_only(
+                            # Run non-blocking guardrails in parallel with the model call and tools.
+                            non_blocking_task = (
+                                asyncio.create_task(
+                                    self._run_input_guardrails(
+                                        starting_agent,
+                                        non_blocking_guardrails,
+                                        copy.deepcopy(input),
+                                        context_wrapper,
+                                    )
+                                )
+                                if non_blocking_guardrails
+                                else None
+                            )
+
+                            # Now that blocking guardrails completed, get the model response.
+                            model_response, output_schema, handoffs = await self._get_model_response_only(
                                 agent=current_agent,
                                 all_tools=all_tools,
                                 original_input=original_input,
@@ -425,17 +440,8 @@ class AgentRunner:
                                 tool_use_tracker=tool_use_tracker,
                                 previous_response_id=previous_response_id,
                             )
-                        )
 
-                        # Get model response first (runs in parallel with guardrails)
-                        model_response, output_schema, handoffs = await model_response_task
-
-                        # Now handle tool execution based on blocking behavior
-                        if blocking_guardrails:
-                            # Wait for all guardrails to complete before executing tools
-                            input_guardrail_results = await all_guardrails_task
-
-                            # Now execute tools after guardrails complete
+                            # Execute tools after receiving the model response.
                             turn_result = await self._execute_tools_from_model_response(
                                 agent=current_agent,
                                 all_tools=all_tools,
@@ -449,8 +455,35 @@ class AgentRunner:
                                 run_config=run_config,
                                 tool_use_tracker=tool_use_tracker,
                             )
+
+                            # Collect non-blocking guardrail results if any.
+                            if non_blocking_task is not None:
+                                input_guardrail_results.extend(await non_blocking_task)
                         else:
-                            # No blocking guardrails - execute tools in parallel with remaining guardrails
+                            # No blocking guardrails - run all guardrails in parallel with model/tools.
+                            all_guardrails_task = asyncio.create_task(
+                                self._run_input_guardrails(
+                                    starting_agent,
+                                    all_guardrails,
+                                    copy.deepcopy(input),
+                                    context_wrapper,
+                                )
+                            )
+
+                            model_response, output_schema, handoffs = await self._get_model_response_only(
+                                agent=current_agent,
+                                all_tools=all_tools,
+                                original_input=original_input,
+                                generated_items=generated_items,
+                                hooks=hooks,
+                                context_wrapper=context_wrapper,
+                                run_config=run_config,
+                                should_run_agent_start_hooks=should_run_agent_start_hooks,
+                                tool_use_tracker=tool_use_tracker,
+                                previous_response_id=previous_response_id,
+                            )
+
+                            # Execute tools in parallel with remaining guardrails
                             tool_execution_task = asyncio.create_task(
                                 self._execute_tools_from_model_response(
                                     agent=current_agent,
@@ -663,7 +696,10 @@ class AgentRunner:
                 t.cancel()
             raise
 
-        streamed_result.input_guardrail_results = guardrail_results
+        # Append to any existing guardrail results to avoid overwriting
+        streamed_result.input_guardrail_results = (
+            streamed_result.input_guardrail_results + guardrail_results
+        )
 
     @classmethod
     async def _start_streaming(
@@ -730,17 +766,52 @@ class AgentRunner:
                     break
 
                 if current_turn == 1:
-                    # Run the input guardrails in the background and put the results on the queue
-                    streamed_result._input_guardrails_task = asyncio.create_task(
-                        cls._run_input_guardrails_with_queue(
+                    # On the first turn, separate blocking and non-blocking guardrails.
+                    all_guardrails = starting_agent.input_guardrails + (
+                        run_config.input_guardrails or []
+                    )
+                    blocking_guardrails, non_blocking_guardrails = cls._separate_blocking_guardrails(
+                        all_guardrails
+                    )
+
+                    if blocking_guardrails:
+                        # Gate the model streaming by running blocking guardrails to completion first.
+                        # If a tripwire is triggered, this will raise BEFORE any LLM call.
+                        blocking_results = await cls._run_input_guardrails(
                             starting_agent,
-                            starting_agent.input_guardrails + (run_config.input_guardrails or []),
+                            blocking_guardrails,
                             copy.deepcopy(ItemHelpers.input_to_new_input_list(starting_input)),
                             context_wrapper,
-                            streamed_result,
-                            current_span,
                         )
-                    )
+                        # Push blocking results to the guardrail queue for consumers.
+                        for r in blocking_results:
+                            streamed_result._input_guardrail_queue.put_nowait(r)
+                        # Start any non-blocking guardrails in the background.
+                        if non_blocking_guardrails:
+                            streamed_result._input_guardrails_task = asyncio.create_task(
+                                cls._run_input_guardrails_with_queue(
+                                    starting_agent,
+                                    non_blocking_guardrails,
+                                    copy.deepcopy(
+                                        ItemHelpers.input_to_new_input_list(starting_input)
+                                    ),
+                                    context_wrapper,
+                                    streamed_result,
+                                    current_span,
+                                )
+                            )
+                    else:
+                        # No blocking guardrails - run all guardrails in the background.
+                        streamed_result._input_guardrails_task = asyncio.create_task(
+                            cls._run_input_guardrails_with_queue(
+                                starting_agent,
+                                all_guardrails,
+                                copy.deepcopy(ItemHelpers.input_to_new_input_list(starting_input)),
+                                context_wrapper,
+                                streamed_result,
+                                current_span,
+                            )
+                        )
                 try:
                     turn_result = await cls._run_single_turn_streamed(
                         streamed_result,
