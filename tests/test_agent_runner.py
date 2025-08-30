@@ -971,7 +971,8 @@ async def test_mixed_blocking_and_non_blocking_guardrails():
 
     result = await Runner.run(agent, input="test input")
 
-    # With mixed guardrails, tools should wait for ALL guardrails since any blocking guardrail blocks
+    # With mixed guardrails, tools should wait for ALL guardrails
+    # since any blocking guardrail blocks
     expected_start = ["blocking_start", "non_blocking_start"]
     expected_middle = ["blocking_end"]
     expected_end = ["non_blocking_end", "tool_executed"]
