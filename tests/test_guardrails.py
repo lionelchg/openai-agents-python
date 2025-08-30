@@ -262,7 +262,7 @@ async def test_output_guardrail_decorators():
     assert guardrail.get_name() == "Custom name"
 
 
-@input_guardrail(block_tool_calls=False)
+@input_guardrail(block_downstream_calls=False)
 def non_blocking_input_guardrail(
     context: RunContextWrapper[Any], agent: Agent[Any], input: str | list[TResponseInputItem]
 ) -> GuardrailFunctionOutput:
@@ -272,7 +272,7 @@ def non_blocking_input_guardrail(
     )
 
 
-@input_guardrail(block_tool_calls=True)
+@input_guardrail(block_downstream_calls=True)
 def blocking_input_guardrail(
     context: RunContextWrapper[Any], agent: Agent[Any], input: str | list[TResponseInputItem]
 ) -> GuardrailFunctionOutput:
@@ -283,15 +283,15 @@ def blocking_input_guardrail(
 
 
 @pytest.mark.asyncio
-async def test_input_guardrail_block_tool_calls_parameter():
-    """Test that the block_tool_calls parameter is properly set."""
-    # Test decorator with block_tool_calls=False
+async def test_input_guardrail_block_downstream_calls_parameter():
+    """Test that the block_downstream_calls parameter is properly set."""
+    # Test decorator with block_downstream_calls=False
     guardrail = non_blocking_input_guardrail
-    assert guardrail.block_tool_calls is False
+    assert guardrail.block_downstream_calls is False
 
-    # Test decorator with block_tool_calls=True (explicit)
+    # Test decorator with block_downstream_calls=True (explicit)
     guardrail = blocking_input_guardrail
-    assert guardrail.block_tool_calls is True
+    assert guardrail.block_downstream_calls is True
 
     # Test default behavior (should be True)
     @input_guardrail
@@ -300,24 +300,24 @@ async def test_input_guardrail_block_tool_calls_parameter():
     ) -> GuardrailFunctionOutput:
         return GuardrailFunctionOutput(output_info="default", tripwire_triggered=False)
 
-    assert default_guardrail.block_tool_calls is True
+    assert default_guardrail.block_downstream_calls is True
 
 
 @pytest.mark.asyncio
-async def test_input_guardrail_manual_creation_with_block_tool_calls():
-    """Test creating InputGuardrail manually with block_tool_calls parameter."""
+async def test_input_guardrail_manual_creation_with_block_downstream_calls():
+    """Test creating InputGuardrail manually with block_downstream_calls parameter."""
 
     def test_func(context, agent, input):
         return GuardrailFunctionOutput(output_info="test", tripwire_triggered=False)
 
     # Test explicit True
-    guardrail = InputGuardrail(guardrail_function=test_func, block_tool_calls=True)
-    assert guardrail.block_tool_calls is True
+    guardrail = InputGuardrail(guardrail_function=test_func, block_downstream_calls=True)
+    assert guardrail.block_downstream_calls is True
 
     # Test explicit False
-    guardrail = InputGuardrail(guardrail_function=test_func, block_tool_calls=False)
-    assert guardrail.block_tool_calls is False
+    guardrail = InputGuardrail(guardrail_function=test_func, block_downstream_calls=False)
+    assert guardrail.block_downstream_calls is False
 
     # Test default (should be True)
     guardrail = InputGuardrail(guardrail_function=test_func)
-    assert guardrail.block_tool_calls is True
+    assert guardrail.block_downstream_calls is True

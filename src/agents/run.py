@@ -1117,7 +1117,7 @@ class AgentRunner:
         non_blocking = []
 
         for guardrail in guardrails:
-            if guardrail.block_tool_calls:
+            if guardrail.block_downstream_calls:
                 blocking.append(guardrail)
             else:
                 non_blocking.append(guardrail)

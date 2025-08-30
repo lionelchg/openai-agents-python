@@ -834,7 +834,7 @@ async def test_blocking_input_guardrail_delays_tool_execution():
 
     # Create agent with blocking guardrail and tool
     blocking_guardrail = InputGuardrail(
-        guardrail_function=slow_blocking_guardrail, block_tool_calls=True
+        guardrail_function=slow_blocking_guardrail, block_downstream_calls=True
     )
 
     model = FakeModel()
@@ -891,7 +891,7 @@ async def test_non_blocking_input_guardrail_allows_parallel_tool_execution():
 
     # Create agent with non-blocking guardrail and tool
     non_blocking_guardrail = InputGuardrail(
-        guardrail_function=slow_non_blocking_guardrail, block_tool_calls=False
+        guardrail_function=slow_non_blocking_guardrail, block_downstream_calls=False
     )
 
     model = FakeModel()
@@ -952,9 +952,11 @@ async def test_mixed_blocking_and_non_blocking_guardrails():
         return "tool_result"
 
     # Create agent with both types of guardrails
-    blocking_gr = InputGuardrail(guardrail_function=blocking_guardrail, block_tool_calls=True)
+    blocking_gr = InputGuardrail(
+        guardrail_function=blocking_guardrail, block_downstream_calls=True
+    )
     non_blocking_gr = InputGuardrail(
-        guardrail_function=non_blocking_guardrail, block_tool_calls=False
+        guardrail_function=non_blocking_guardrail, block_downstream_calls=False
     )
 
     model = FakeModel()
